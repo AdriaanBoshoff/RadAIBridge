@@ -49,7 +49,7 @@ Windows only, because RAD Studio is.
 | | |
 | --- | --- |
 | **Tested on** | RAD Studio 13 (Delphi 37.0), Windows 11 |
-| **Minimum** | 36.0 — enforced by the installer |
+| **Minimum** | 36.0 — enforced by the installer, but **not tested**. 36.0 is the oldest release that has the ToolsAPI interfaces this uses, so it should compile; nobody has actually tried it. If you run it on 36.0, please open an issue saying whether it worked. |
 | **Older versions** | Will not compile. The plugin uses ToolsAPI interfaces (`IOTAProjectCreator190` among others) that do not exist in earlier releases. The installer refuses them with an explanation rather than dumping compiler errors. |
 | **Community Edition** | Unverified. CE may not permit installing design-time packages. If you try it, please report what happens. |
 
@@ -295,6 +295,38 @@ strings otherwise — so Windows paths need no escaping.
 .\IdePlugin\tools\dismiss-ide-modal.ps1              # report what is showing
 .\IdePlugin\tools\dismiss-ide-modal.ps1 -Button No   # click a button
 ```
+
+---
+
+# Security
+
+Worth understanding before you install something that can write to your source
+tree.
+
+**What the plugin exposes.** It listens on a TCP socket bound to `127.0.0.1`
+only, on an OS-assigned ephemeral port. It is not reachable from your network,
+and binding is not configurable. The port is written to
+`%APPDATA%\RadAiBridge\bridge.json` so the MCP server can find it.
+
+**There is no authentication.** Any process running as you on your machine can
+connect to that port and drive your IDE — read and write editor buffers, change
+project files, compile, and start your program under the debugger. On a normal
+single-user development machine that is the same trust boundary as your shell
+and your editor's own plugins. On a shared or multi-user machine, understand
+that anything you are logged in as can use it. Do not run this on a machine
+where you would not also hand out shell access.
+
+**What your agent can do.** The tool surface is deliberately powerful — that is
+the point of the project. An agent with this connected can modify and overwrite
+your source, and run code. **Use version control, and commit before letting an
+agent work unsupervised.** `setEditorContent` replaces whole files; there is no
+undo beyond the IDE's own.
+
+**The plugin loads into your IDE process.** It is a design-time package, so it
+has the same access to your machine as RAD Studio itself. It was written by an
+AI (see the top of this file) and reviewed by one person. Read
+`IdePlugin/src/` before installing it — it is about 4,000 lines and the socket
+code is all in `RadAiBridge.Json.Rpc.pas`.
 
 ---
 
