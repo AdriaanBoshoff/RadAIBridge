@@ -1,140 +1,192 @@
 # RAD AI Bridge
 
-Lets an AI coding agent (Claude Code, or anything else that speaks MCP) drive a
-**running RAD Studio IDE**: read and write live editor buffers, manage project
-files, build with structured error output, drive the debugger, and inspect or
-edit the FMX/VCL form Designer's component tree.
+Lets an AI coding agent (Claude Code, Cursor, Cline, Copilot agent mode — anything
+that speaks MCP) drive a **running RAD Studio IDE**: read and write live editor
+buffers, manage project files, build with structured error output, drive the
+debugger, and inspect or edit the FMX/VCL form Designer's component tree.
 
-Not a code generator that writes files and hopes. It talks to the IDE you
-already have open, through the Open Tools API, so the agent sees exactly what
-you see — the same buffers, the same project, the same debug session.
+Not a code generator that writes files and hopes. It talks to the IDE you already
+have open, through the Open Tools API, so the agent sees exactly what you see —
+the same buffers, the same project, the same debug session.
 
 ```
 ┌─────────────┐   stdio    ┌────────────┐   TCP/JSON   ┌──────────────────┐
-│ Claude Code │ ─────────► │ MCP server │ ───────────► │ RadAiBridge.bpl  │
-│  (or other) │            │  (Node.js) │   loopback   │ inside RAD Studio│
+│  Your agent │ ─────────► │ MCP server │ ───────────► │ RadAiBridge.bpl  │
+│             │            │  (Node.js) │   loopback   │ inside RAD Studio│
 └─────────────┘            └────────────┘              └──────────────────┘
 ```
 
 Two pieces:
 
-- **`IdePlugin/`** — a Delphi Open Tools API package (`RadAiBridge.bpl`) that
-  loads into RAD Studio and runs a small JSON-RPC server on a loopback TCP
-  socket. No UI, no menu entry.
-- **`McpServer/`** — a Node.js MCP server launched over stdio. It reads the
-  plugin's published port and forwards MCP tool calls to it.
+- **`IdePlugin/`** — a Delphi Open Tools API package (`RadAiBridge.bpl`) that loads
+  into RAD Studio and runs a small JSON-RPC server on a loopback TCP socket. No UI,
+  no menu entry.
+- **`McpServer/`** — a Node.js MCP server launched over stdio. It reads the plugin's
+  published port and forwards MCP tool calls to it.
 
-Developed and verified against **RAD Studio 13 (Delphi 37.0)** on Windows.
-
----
-
-## Requirements
-
-- RAD Studio / Delphi with the command-line compiler (`dcc32.exe`) — any
-  edition that includes `designide`.
-- Node.js 18+ (for the MCP server).
-- Windows. The IDE host process is Win32, so the plugin is Win32 only. This has
-  no bearing on what *your* projects target.
+Windows only, because RAD Studio is.
+Developed and verified against **RAD Studio 13 (Delphi 37.0)**.
 
 ---
 
-## 1. Build and install the IDE plugin
+# Installation
 
-The plugin must be compiled for **Win32** — `bds.exe` is a 32-bit process, so
-design-time packages must match it regardless of what platforms your own
-projects target.
+## Before you start
 
-### Option A — the build script (recommended)
+You need:
 
-From a bash shell (Git Bash ships with RAD Studio-era Windows toolchains, or
-use WSL/MSYS):
+- **RAD Studio / Delphi**, any edition that includes the command-line compiler
+  (`dcc32.exe`) and `designide`. The installer finds it for you.
+- **Node.js 18 or newer** — [nodejs.org](https://nodejs.org), take the LTS build.
+  Tick "Add to PATH" during setup (it is on by default).
+- **An MCP-capable AI agent**, e.g. Claude Code, Claude Desktop, Cursor, Cline,
+  Windsurf, or VS Code with Copilot agent mode.
 
-```bash
-cd IdePlugin
-./rebuild.sh
+You do **not** need Administrator rights, Git Bash, WSL, or any Delphi knowledge.
+
+## Step 1 — Get the files
+
+If you have Git:
+
+```powershell
+git clone https://github.com/AdriaanBoshoff/RadAIBridge.git
+cd RadAIBridge
 ```
 
-This compiles, shuts the IDE down, deploys the `.bpl`, restarts the IDE and
-waits until the bridge reports itself up. Set `BDS_VER` if you are not on
-37.0 (e.g. `BDS_VER=23.0 ./rebuild.sh`).
+If you do not: click **Code → Download ZIP** on GitHub, then extract it somewhere
+permanent (for example `C:\Tools\RadAIBridge`). Do not run it from inside the ZIP,
+and avoid a OneDrive-synced folder.
 
-The script deliberately closes RAD Studio before copying. Writing over a `.bpl`
-that a running IDE has mapped appears to succeed but leaves an image the next
-IDE start silently fails to load — no error dialog, the package simply never
-appears. That failure mode is very hard to recognise, so the script makes it
-impossible.
+> **If you downloaded the ZIP**, Windows marks the files as "from the internet" and
+> PowerShell will refuse to run them. Unblock them once:
+>
+> ```powershell
+> Get-ChildItem -Recurse | Unblock-File
+> ```
 
-### Option B — from inside the IDE
+## Step 2 — Run the installer
 
-1. Open `IdePlugin/RadAiBridge.dproj`.
-2. Set the target platform to **Windows 32-bit** and build.
-3. Right-click the project → **Install**.
+Open **PowerShell** in the folder you just created (Shift + right-click the folder
+→ *Open PowerShell window here*), and run:
 
-### Registering it manually
-
-The package must be listed under:
-
-```
-HKCU\SOFTWARE\Embarcadero\BDS\<version>\Known Packages
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-as a string value whose *name* is the full path to `RadAiBridge.bpl` and whose
-*data* is any description. `rebuild.sh` does not do this for you — install once
-via the IDE (Option B), or add the value yourself.
+> Why `-ExecutionPolicy Bypass`? Windows blocks PowerShell scripts by default.
+> This allows just this one run, and changes no settings on your machine. If you
+> would rather not, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, and
+> afterwards `.\install.ps1` works on its own.
 
-### Confirming it loaded
-
-On every start the plugin writes its port to:
+The installer walks through seven steps and tells you what it is doing at each one:
 
 ```
-%APPDATA%\RadAiBridge\bridge.json
+[1/7] Looking for RAD Studio          finds your install, asks which if several
+[2/7] Checking Node.js                 verifies version 18+
+[3/7] Making sure RAD Studio is closed asks before closing anything
+[4/7] Compiling the IDE plugin (Win32) runs dcc32
+[5/7] Registering the package          writes to HKCU, no admin needed
+[6/7] Building the MCP server          npm install + npm run build
+[7/7] Starting RAD Studio              waits until the bridge reports in
 ```
 
-If that file appears after RAD Studio starts, the bridge is live. If it does
-not, the package did not load — check that the path in *Known Packages* points
-at a `.bpl` that exists.
+A successful run ends with the live port and the exact config to paste into your
+agent:
 
----
+```
+      Bridge is live: {"port":49452,"pid":45112,"version":"1"}
 
-## 2. Build the MCP server
-
-```bash
-cd McpServer
-npm install
-npm run build
+Installed.
 ```
 
-This produces `McpServer/dist/index.js`.
+**It will offer to close RAD Studio.** It has to: a `.bpl` that a running IDE has
+mapped cannot be safely replaced. Save your work before answering yes.
 
----
+Useful switches:
 
-## 3. Point your agent at it
+| Switch | Effect |
+| --- | --- |
+| `-BdsVersion 37.0` | Pick a RAD Studio version without being asked |
+| `-SkipMcpServer` | Build only the IDE plugin |
+| `-NoStart` | Do not launch RAD Studio at the end |
+| `-CloseIde` | Close a running IDE without asking (unattended installs) |
 
-A project-level `.mcp.json` is included:
+## Step 3 — Connect your agent
+
+The installer prints a ready-made config block. For Claude Code, put this in
+`.mcp.json` in your project folder:
 
 ```json
 {
   "mcpServers": {
     "rad-ai-bridge": {
       "command": "node",
-      "args": ["./McpServer/dist/index.js"]
+      "args": ["C:/Users/you/Documents/GitHub/RadAIBridge/McpServer/dist/index.js"]
     }
   }
 }
 ```
 
-Use an absolute path in `args` if you want it available from any working
-directory, or put the same block in your user-level config.
+**[CONNECTING.md](CONNECTING.md) has step-by-step config for Claude Code, Claude
+Desktop, Cursor, VS Code / Copilot, Cline, Roo Code, Windsurf, Continue, Zed, and
+any other MCP client**, plus troubleshooting.
 
-Start RAD Studio first, then your agent. With both running you get tools like
-`getFormTree`, `applyEdit`, `compileProject`, `runProject`, `getCallStack` and
-`addBreakpoint`.
+Two rules worth knowing now:
+
+1. **Start RAD Studio before your agent.** The MCP server locates the IDE through a
+   file that only exists while RAD Studio is running.
+2. **In JSON, write `C:\\Users\\...` or `C:/Users/...`** — a single backslash is an
+   escape character and will break the path.
+
+## Step 4 — Install the agent skill (recommended)
+
+`skills/rad-ai-bridge/SKILL.md` teaches the agent how to use these tools well —
+tool ordering, batching, and how to avoid the IDE dialogs that block every call.
+For Claude Code:
+
+```powershell
+Copy-Item -Recurse -Force .\skills\rad-ai-bridge $env:USERPROFILE\.claude\skills\
+```
+
+See [skills/README.md](skills/README.md) for other agents.
+
+## Step 5 — Check it works
+
+Open a project in RAD Studio, then ask your agent something like *"what project is
+open in RAD Studio?"*. It should answer using `getProjectInfo`.
+
+If not, test the plugin directly, bypassing the agent entirely:
+
+```powershell
+node .\IdePlugin\tools\call.js getProjectInfo
+```
+
+If that works, the plugin is fine and the problem is your agent's MCP config — see
+[CONNECTING.md](CONNECTING.md). If it does not, the plugin did not load: in RAD
+Studio check **Component → Install Packages** for *RAD AI Bridge*.
+
+## Uninstalling
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+Unregisters the package from every RAD Studio version and removes the discovery
+file. Add `-DeleteBuildOutput` to also delete compiled output. Your copy of the
+repository is left alone — delete the folder yourself.
+
+## Updating
+
+```powershell
+git pull
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
 
 ---
 
-## Tool reference
+# Tool reference
 
-41 tools, grouped roughly as they appear in `McpServer/src/index.ts`:
+41 tools:
 
 | Area | Tools |
 | --- | --- |
@@ -151,81 +203,99 @@ descriptions.
 
 ---
 
-## Developer tools
+# Developing the bridge itself
 
-`IdePlugin/tools/` holds two scripts that make working on the bridge bearable:
+## Rebuild loop
 
-**`call.js`** — drives the RPC socket directly, bypassing MCP entirely. An MCP
-client usually cannot be made to reconnect on demand, so without this every
-plugin change would need an agent restart just to exercise one tool.
-
-```bash
-node tools/call.js getProjectInfo
-node tools/call.js addBreakpoint 'filePath=C:\src\MainFormU.pas' line=74
-node tools/call.js getCallStack maxFrames=8
-```
-
-Parameters are `key=value`, parsed as JSON when that succeeds and kept as plain
-strings otherwise — so Windows paths survive without backslash escaping.
-
-**`dismiss-ide-modal.ps1`** — reports, and optionally clicks, a modal dialog
-blocking the IDE:
+A `.bpl` cannot hot-reload, so every plugin change needs a full IDE restart:
 
 ```powershell
-./tools/dismiss-ide-modal.ps1              # report what is showing
-./tools/dismiss-ide-modal.ps1 -Button No   # click "No"
+.\IdePlugin\rebuild.ps1
+```
+
+Compiles, closes the IDE, deploys, restarts, and waits until the bridge reports in.
+`rebuild.sh` is the same thing for Git Bash/WSL, if you prefer it — but nothing in
+this project requires bash.
+
+**Never copy over a deployed `.bpl` while an IDE has it mapped.** The copy appears
+to succeed but leaves an image the next IDE start silently fails to load — no error
+dialog, the package simply never appears in the process. Both rebuild scripts close
+the IDE first to make that impossible. To check whether it loaded:
+
+```powershell
+(Get-Process bds).Modules | Where-Object ModuleName -like '*RadAi*'
+```
+
+## Talking to the plugin without an agent
+
+`IdePlugin/tools/call.js` drives the RPC socket directly. An MCP client usually
+cannot be made to reconnect on demand, so without this, every plugin change would
+need an agent restart just to exercise one tool.
+
+```powershell
+node .\IdePlugin\tools\call.js getProjectInfo
+node .\IdePlugin\tools\call.js addBreakpoint 'filePath=C:\src\MainFormU.pas' line=74
+node .\IdePlugin\tools\call.js getCallStack maxFrames=8
+```
+
+Parameters are `key=value`, parsed as JSON where that succeeds and kept as plain
+strings otherwise — so Windows paths need no escaping.
+
+## When a call hangs
+
+```powershell
+.\IdePlugin\tools\dismiss-ide-modal.ps1              # report what is showing
+.\IdePlugin\tools\dismiss-ide-modal.ps1 -Button No   # click a button
 ```
 
 ---
 
-## Known limitations
+# Known limitations
 
-- **Any modal dialog in the IDE blocks every bridge call.** Tool handlers run
-  on the IDE main thread, so while a dialog is up, calls queue until it is
-  dismissed. Calls fail after 120s with a message naming the likely cause
-  rather than hanging forever. Common culprits: *"Source has been modified.
-  Rebuild?"*, third-party wizards that prompt on component creation (CnPack's
-  component-name dialog is a frequent one), and unsaved project groups.
-  `dismiss-ide-modal.ps1` is the escape hatch. Routing work through a posted
-  window message instead of `TThread.Synchronize` does **not** avoid this — a
-  modal's own message loop does not dispatch the posted work.
-- **One IDE instance at a time.** The discovery file holds a single port. A
-  second instance overwrites it. (Shutdown is at least PID-checked, so an
-  instance closing will not delete a newer instance's entry.)
-- **`compileProject` shells out to `msbuild`** via `rsvars.bat` rather than
-  using the IDE's internal message view, whose API is thinly documented. The
-  result is clean structured errors at the cost of being slower than an
-  in-process build. It runs off the main thread so the IDE stays responsive,
-  and full `msbuild` output is returned only on request
+- **Any modal dialog in the IDE blocks every bridge call.** Tool handlers run on the
+  IDE main thread, so while a dialog is up, calls queue until it is dismissed. They
+  fail after 120s with a message naming the likely cause rather than hanging
+  forever. Common culprits: *"Source has been modified. Rebuild?"*, third-party
+  wizards that prompt on component creation (CnPack's component-name dialog is a
+  frequent one), and unsaved project groups. Routing work through a posted window
+  message instead of `TThread.Synchronize` does **not** avoid this — a modal's own
+  message loop does not dispatch the posted work.
+- **One IDE instance at a time.** The discovery file holds a single port; a second
+  instance overwrites it. Shutdown is at least PID-checked, so an instance closing
+  will not delete a newer instance's entry.
+- **The plugin is Win32 only.** `bds.exe` is a 32-bit process, so design-time
+  packages must match it. This has no bearing on what platforms *your* projects
+  target.
+- **`compileProject` shells out to `msbuild`** via `rsvars.bat` rather than using the
+  IDE's internal message view, whose API is thinly documented. Clean structured
+  errors, slightly slower than an in-process build. It runs off the main thread so
+  the IDE stays responsive, and full `msbuild` output is returned only on request
   (`includeRawOutput: true`) or when a failure could not be parsed.
-- **Designer tools are framework-agnostic** (FMX and VCL) — they go through
-  `IDesigner` plus RTTI rather than anything framework-specific.
-- `runToCursor` depends on the editor's current caret position, which the
-  bridge does not set for you.
+- `runToCursor` depends on the editor's current caret position, which the bridge does
+  not set for you.
 
 ---
 
-## Notes for anyone extending this
+# Notes for anyone extending this
 
-A few things cost real time to work out; they are documented in the source but
+A few things cost real time to work out. They are commented in the source, but are
 worth repeating:
 
-- `IOTAProjectCreator.GetFileName` must return the **`.dpr`**, never the
-  `.dproj`. The IDE resolves the project-type handler from that extension, and
-  a `.dproj` matches nothing — the nil result is then dereferenced, giving an
-  access violation inside `delphicoreide*.bpl` with no hint as to the cause.
+- `IOTAProjectCreator.GetFileName` must return the **`.dpr`**, never the `.dproj`.
+  The IDE resolves the project-type handler from that extension, and a `.dproj`
+  matches nothing — the nil result is then dereferenced, giving an access violation
+  inside `delphicoreide*.bpl` with no hint as to the cause.
 - `GetFrameworkType` must return exactly `'FMX'` or `'VCL'`. `'FireMonkey'` is
-  accepted and silently stored as a third, meaningless framework, after which
-  the IDE warns that your units are incompatible with the project.
+  accepted and silently stored as a third, meaningless framework, after which the
+  IDE warns that your units are incompatible with the project.
 - `IOTAModule.Save(ChangeName, ForceSave)` has no "prompt" parameter.
   `ForceSave = True` is what suppresses the *"Save changes to X?"* dialog.
-- `IOTAThread.CallHeaders` and `GetCallPos` are **one-based**. Indexing from 0
-  trips an assertion inside the debug kernel (`item.src`, `DBKIMPL.CPP`) which
-  raises a modal error dialog — which then blocks the bridge, so the visible
-  symptom is a hang that points nowhere near the indexing.
-- `IOTAEditActions` is implemented by the edit *buffer*, not by `IOTAEditor`,
-  so casting `Module.CurrentEditor` to it can never succeed. Run and stepping
-  go through `INTAServices.ActionList` instead, which needs no focused editor.
-  The action names are undocumented and have changed between releases — use
+- `IOTAThread.CallHeaders` and `GetCallPos` are **one-based**. Indexing from 0 trips
+  an assertion inside the debug kernel (`item.src`, `DBKIMPL.CPP`) which raises a
+  modal error dialog — which then blocks the bridge, so the visible symptom is a
+  hang that points nowhere near the indexing.
+- `IOTAEditActions` is implemented by the edit *buffer*, not by `IOTAEditor`, so
+  casting `Module.CurrentEditor` to it can never succeed. Run and stepping go
+  through `INTAServices.ActionList` instead, which needs no focused editor. The
+  action names are undocumented and have changed between releases — use
   `listIdeActions` to discover them rather than guessing.
-- A `.bpl` cannot hot-reload. Every plugin change needs a full IDE restart.
