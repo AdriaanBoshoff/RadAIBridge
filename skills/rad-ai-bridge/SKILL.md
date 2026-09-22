@@ -25,8 +25,21 @@ queues behind it and eventually fails after 120 seconds.
 
 If a call hangs, it is almost never a deadlock in the bridge. It is a dialog
 sitting on the user's screen. **Do not theorise, and do not retry in a loop.**
-Tell the user what is likely showing and ask them to look, or if you have shell
-access, find it:
+
+**Look at it first.** `captureScreenshot` with `target: "ide"` is the one tool
+that keeps working while a modal is up — it is registered raw instead of being
+marshalled onto the main thread, and it makes no ToolsAPI call, so a blocked
+main thread does not affect it. Call it and *read the dialog* before doing
+anything else:
+
+```
+captureScreenshot { "target": "ide" }
+```
+
+(`target: "app"` needs one ToolsAPI lookup to find the debugged process, so that
+variant will stall behind the modal too. During a hang, use `"ide"`.)
+
+Then tell the user what is showing, or if you have shell access, act on it:
 
 ```powershell
 .\IdePlugin\tools\dismiss-ide-modal.ps1              # report what is showing
@@ -103,6 +116,15 @@ unsaved changes. `getEditorContent` reads the live buffer.
 - Use `getEditorLines` when you only need a range — cheaper than the whole file.
 - After adding a unit reference, use **`addUsesUnit`** rather than hand-editing
   the `uses` clause. It puts the entry in the right clause and avoids duplicates.
+- **`saveFile`** flushes buffers to disk — one module with `filePath`, or every
+  rooted, modified module when called with no arguments. It force-saves, so it
+  does not raise "Save changes to X?".
+
+You rarely need `saveFile` before building, because `compileProject` saves
+first. Reach for it when something *outside* the IDE has to see your edits: git,
+a linter, a build script, or the user opening the file in another editor. That
+is a real trap — an agent that edits buffers and then runs `git diff` sees
+nothing and concludes its edits vanished.
 
 ---
 
@@ -150,6 +172,42 @@ file, line, code and message. That is all you normally need.
   roughly 8,000 tokens of noise per build.
 - Fix the **first** error and rebuild. Later errors in Delphi are very often
   cascades from the first one.
+
+---
+
+## Look at what you built
+
+"It compiles and it runs" is a low bar for UI work. `getFormTree` tells you a
+control exists and where it claims to be; it does not tell you the caption is
+clipped, two panels overlap, the text is unreadable on that background, or the
+form came up blank because the constructor raised.
+
+```
+runProject
+captureScreenshot { "target": "app" }
+```
+
+Returns a real PNG of the running program's window, which you can actually see.
+Use it:
+
+- after any layout or styling change, before telling the user it is done;
+- when a user says "it looks wrong" — look, rather than asking them to describe
+  it;
+- to confirm the app got past startup at all.
+
+Notes that save you a round trip:
+
+- Give the program a moment after `runProject`. If the main form has not been
+  shown yet, the call says so — wait briefly and repeat rather than concluding
+  the app failed.
+- It uses `PrintWindow`, so the window does **not** need to be focused or
+  unobscured. Do not ask the user to bring it to the front.
+- `windowTitle` narrows the target when the app owns several windows.
+- If the program is stopped at a breakpoint before its form is shown, there is
+  nothing to capture yet. That is expected, not an error in your setup.
+
+Do not screenshot after every trivial edit — it is a large image each time.
+Screenshot at the point where you would otherwise claim the UI is correct.
 
 ---
 

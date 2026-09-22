@@ -10,9 +10,14 @@ unit RadAiBridge.MainThread;
 
   Posting a message to our own window instead means the work runs from whatever
   message loop the IDE is currently pumping, which is the context the IDE
-  expects. It also degrades better: a modal dialog's message loop still
-  dispatches posted messages, so a prompt that appears mid-call no longer
-  deadlocks every subsequent RPC call.
+  expects.
+
+  It does NOT rescue us from modal dialogs, despite an earlier comment here
+  claiming it did. Measured: while any IDE modal is up, every call through here
+  times out. The modal runs its own loop and our posted message is not
+  dispatched to the target window from it. The only tool that keeps working is
+  captureScreenshot with target "ide", which is why that one deliberately
+  avoids this unit.
 
   The wait is bounded. A blocked main thread now fails one call with a message
   that says what is probably happening, instead of hanging the caller forever. }

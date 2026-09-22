@@ -1,5 +1,23 @@
 # RAD AI Bridge
 
+> ## ⚠️ This entire project was designed and written by Claude Code
+>
+> Every line of it — the Delphi Open Tools API plugin, the MCP server, the
+> installer, these docs — was designed and implemented by [Claude
+> Code](https://claude.com/claude-code), Anthropic's agentic coding tool. It
+> was built by an AI, using the very bridge it was building, driving a live RAD
+> Studio IDE.
+>
+> It is not a toy. It compiles cleanly, it has been exercised end to end against
+> a running IDE, and the design decisions in it were made for real reasons that
+> are documented where they were made. But you should know what you are
+> installing: **an AI-authored design-time package that loads into your IDE.**
+> Read the source before you install it, as you would with any third-party
+> package. It is MIT licensed and comes with no warranty.
+>
+> It has been tested by its author on exactly one machine, against **RAD Studio
+> 13 (Delphi 37.0)** on Windows 11. Bug reports are genuinely welcome.
+
 Lets an AI coding agent (Claude Code, Cursor, Cline, Copilot agent mode — anything
 that speaks MCP) drive a **running RAD Studio IDE**: read and write live editor
 buffers, manage project files, build with structured error output, drive the
@@ -25,7 +43,17 @@ Two pieces:
   published port and forwards MCP tool calls to it.
 
 Windows only, because RAD Studio is.
-Developed and verified against **RAD Studio 13 (Delphi 37.0)**.
+
+## Version support
+
+| | |
+| --- | --- |
+| **Tested on** | RAD Studio 13 (Delphi 37.0), Windows 11 |
+| **Minimum** | 36.0 — enforced by the installer |
+| **Older versions** | Will not compile. The plugin uses ToolsAPI interfaces (`IOTAProjectCreator190` among others) that do not exist in earlier releases. The installer refuses them with an explanation rather than dumping compiler errors. |
+| **Community Edition** | Unverified. CE may not permit installing design-time packages. If you try it, please report what happens. |
+
+Only one RAD Studio instance is discoverable at a time.
 
 ---
 
@@ -186,17 +214,37 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 
 # Tool reference
 
-41 tools:
+43 tools:
 
 | Area | Tools |
 | --- | --- |
-| **Editor** | `getEditorContent`, `getEditorLines`, `setEditorContent`, `applyEdit`, `openFile`, `listOpenFiles` |
+| **Editor** | `getEditorContent`, `getEditorLines`, `setEditorContent`, `applyEdit`, `openFile`, `saveFile`, `listOpenFiles` |
 | **Project** | `getProjectInfo`, `openProject`, `addFileToProject`, `removeFileFromProject`, `setProjectPlatform`, `listBuildConfigurations`, `listProjectOptions`, `getProjectOption`, `setProjectOption` |
 | **Creation** | `createProject`, `createUnit`, `createForm`, `addUsesUnit` |
 | **Build** | `compileProject` |
 | **Designer** | `getFormTree`, `addComponent`, `deleteComponent`, `selectComponent`, `getComponentProperties`, `setComponentProperty`, `setComponentProperties`, `setComponentEvent` |
 | **Debugger** | `runProject`, `stepOver`, `stepInto`, `stepOut`, `runToCursor`, `terminateProcess`, `addBreakpoint`, `removeBreakpoint`, `removeAllBreakpoints`, `listBreakpoints`, `getCallStack`, `evaluateExpression` |
+| **Visual** | `captureScreenshot` |
 | **Diagnostics** | `listIdeActions` |
+
+### `captureScreenshot` is the one worth knowing about
+
+Every other tool describes the application *structurally* — a component tree, a
+property value, a compiler message. None of that tells an agent whether the UI
+actually **looks** right: controls overlapping, text clipped, a layout that
+collapses at a different size, a form that is blank because an exception ate the
+constructor.
+
+`captureScreenshot` returns real pixels as an image the agent can see:
+
+- `target: "app"` — the program running under the debugger. This is how an agent
+  verifies its own UI work instead of assuming it from the component tree.
+- `target: "ide"` — RAD Studio itself, which is how an agent *reads* a modal
+  dialog that is blocking every other call.
+
+It uses `PrintWindow` with `PW_RENDERFULLCONTENT`, so the window does not need to
+be focused or unobscured, and FMX's GPU-composited rendering captures correctly
+rather than coming back black.
 
 `McpServer/src/index.ts` carries the authoritative list with full parameter
 descriptions.
@@ -259,7 +307,14 @@ strings otherwise — so Windows paths need no escaping.
   wizards that prompt on component creation (CnPack's component-name dialog is a
   frequent one), and unsaved project groups. Routing work through a posted window
   message instead of `TThread.Synchronize` does **not** avoid this — a modal's own
-  message loop does not dispatch the posted work.
+  message loop does not dispatch the posted work. An agent can at least *see* what
+  is blocking it: `captureScreenshot` with `target: "ide"` is registered raw rather
+  than marshalled, and its code path is pure Win32 — `EnumWindows`, `PrintWindow`,
+  GDI, WIC — with no ToolsAPI call in it, so there is nothing in it for a modal to
+  block. (`target: "app"` does need one ToolsAPI lookup to find the debugged
+  process, so that variant *will* stall behind a modal.) This is an architectural
+  property of the code rather than something measured against every dialog the IDE
+  can raise.
 - **One IDE instance at a time.** The discovery file holds a single port; a second
   instance overwrites it. Shutdown is at least PID-checked, so an instance closing
   will not delete a newer instance's entry.
@@ -273,6 +328,32 @@ strings otherwise — so Windows paths need no escaping.
   (`includeRawOutput: true`) or when a failure could not be parsed.
 - `runToCursor` depends on the editor's current caret position, which the bridge does
   not set for you.
+
+---
+
+# What is missing
+
+Being specific about the gaps is more useful than a feature list. These are the
+things an agent will reach for and not find:
+
+- **No project-wide search.** There is no "find this symbol across the project".
+  An agent has to open files it already knows about. In practice, use ordinary
+  filesystem grep for discovery and the bridge for anything that needs the live
+  IDE — but remember unsaved buffers will not be on disk (see `saveFile`).
+- **No symbol navigation.** No go-to-definition, no find-references, no type
+  hierarchy. The IDE knows all of this; none of it is exposed yet. This is
+  probably the single highest-value addition.
+- **No way to interact with the running app.** `captureScreenshot` can see the
+  program, but nothing can click a button or type into it, so an agent cannot
+  exercise a UI flow end to end on its own.
+- **No test integration.** No test discovery, no run-and-report for DUnit/DUnitX.
+- **Designer tools act on whatever form is currently open.** They are stateful in
+  a way the rest of the API is not, which makes them the easiest part to misuse.
+- **No `git` or version-control awareness.** Deliberate — that is the host
+  agent's job, not the IDE plugin's.
+
+Contributions welcome. `Notes for anyone extending this`, below, covers the
+non-obvious parts of the Open Tools API that cost the most time to work out.
 
 ---
 

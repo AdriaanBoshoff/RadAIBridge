@@ -78,6 +78,12 @@ tool(
   { filePath: z.string(), show: z.boolean().default(true).describe("Bring the file to front in the editor") }
 );
 
+tool(
+  "saveFile",
+  "Save a file's editor buffer to disk. Omit filePath to save every open module. Edits otherwise only reach disk as a side effect of compileProject, and an unsaved buffer is one of the things that later pops a blocking modal.",
+  { filePath: z.string().optional().describe("Absolute path; omit to save everything") }
+);
+
 // --- Project structure -------------------------------------------------------
 
 tool(
@@ -321,6 +327,53 @@ tool(
 );
 
 tool("deleteComponent", "Delete a named component from the currently open form.", { componentName: z.string() });
+
+// --- Visual feedback --------------------------------------------------------
+
+// Registered directly rather than through tool(), because the result has to be
+// an image content block. Handed back as text, a base64 PNG is just a wall of
+// characters the model cannot see - which defeats the entire point.
+server.registerTool(
+  "captureScreenshot",
+  {
+    description:
+      "Take a screenshot and SEE it. target 'app' captures the program currently running under the debugger — use this to verify a UI actually looks right (layout, overlap, clipped text, blank forms) rather than assuming it does from the component tree. target 'ide' captures the RAD Studio window itself, which is the way to read a modal dialog that is blocking other calls. Call runProject first for 'app', and allow a moment for the main form to appear.",
+    inputSchema: {
+      target: z
+        .enum(["app", "ide"])
+        .optional()
+        .describe("'app' (default) = the running program; 'ide' = RAD Studio itself"),
+      windowTitle: z
+        .string()
+        .optional()
+        .describe("Case-insensitive substring to pick a specific window when the process has several"),
+    },
+  },
+  async (args: Record<string, unknown>) => {
+    try {
+      const shot = (await bridge.call("captureScreenshot", args)) as {
+        base64: string;
+        width: number;
+        height: number;
+        windowTitle: string;
+      };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `"${shot.windowTitle}" — ${shot.width}x${shot.height}`,
+          },
+          { type: "image" as const, data: shot.base64, mimeType: "image/png" },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  }
+);
 
 // --- Debugger -------------------------------------------------------------------
 

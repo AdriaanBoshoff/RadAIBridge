@@ -40,6 +40,7 @@ contains
   RadAiBridge.Tools.Project in 'src\RadAiBridge.Tools.Project.pas',
   RadAiBridge.Tools.Build in 'src\RadAiBridge.Tools.Build.pas',
   RadAiBridge.Tools.Debug in 'src\RadAiBridge.Tools.Debug.pas',
+  RadAiBridge.Tools.Capture in 'src\RadAiBridge.Tools.Capture.pas',
   RadAiBridge.Tools.Design in 'src\RadAiBridge.Tools.Design.pas',
   RadAiBridge.Tools.Create in 'src\RadAiBridge.Tools.Create.pas',
   RadAiBridge.Tools.Source in 'src\RadAiBridge.Tools.Source.pas',

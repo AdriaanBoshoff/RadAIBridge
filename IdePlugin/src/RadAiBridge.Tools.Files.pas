@@ -142,6 +142,57 @@ begin
     Result := TJSONBool.Create(ModuleServices.OpenModule(FilePath) <> nil);
 end;
 
+{ Without this, edits only reach disk as a side effect of compileProject, so an
+  agent that edits and then stops leaves work sitting in unsaved buffers - and
+  an unsaved buffer is one of the things that later pops a blocking modal.
+
+  Save(ChangeName, ForceSave): ForceSave=True is what suppresses the
+  "Save changes to X?" confirmation. There is no "prompt" parameter. }
+function ToolSaveFile(Params: TJSONObject): TJSONValue;
+var
+  FilePath: string;
+  MS: IOTAModuleServices;
+  Module: IOTAModule;
+  Group: IOTAProjectGroup;
+  Saved: TJSONArray;
+  i: Integer;
+begin
+  MS := ModuleServices;
+  if MS = nil then
+    raise Exception.Create('Module services unavailable');
+
+  FilePath := Params.GetValue<string>('filePath', '');
+  Saved := TJSONArray.Create;
+
+  if FilePath <> '' then
+  begin
+    Module := MS.FindModule(FilePath);
+    if Module = nil then
+      raise Exception.CreateFmt('%s is not open in the IDE', [FilePath]);
+    Module.Save(False, True);
+    Saved.Add(Module.FileName);
+  end
+  else
+  begin
+    { Save everything. Project groups are IDE bookkeeping rather than build
+      input, and an unsaved one pops a modal "Save As" that would block the
+      call; a module never written to disk has no filename to save to. Skip
+      both rather than inventing a path on the user's behalf. }
+    for i := 0 to MS.ModuleCount - 1 do
+    begin
+      Module := MS.Modules[i];
+      if Supports(Module, IOTAProjectGroup, Group) then
+        Continue;
+      if not TPath.IsPathRooted(Module.FileName) then
+        Continue;
+      Module.Save(False, True);
+      Saved.Add(Module.FileName);
+    end;
+  end;
+
+  Result := TJSONObject.Create.AddPair('saved', Saved);
+end;
+
 procedure RegisterFileTools(const RegisterFn: TProc<string, TFunc<TJSONObject, TJSONValue>>);
 var
   F: TFunc<TJSONObject, TJSONValue>;
@@ -152,6 +203,7 @@ begin
   F := ToolSetEditorContent;    RegisterFn('setEditorContent', F);
   F := ToolApplyEdit;           RegisterFn('applyEdit', F);
   F := ToolOpenFile;            RegisterFn('openFile', F);
+  F := ToolSaveFile;            RegisterFn('saveFile', F);
 end;
 
 end.

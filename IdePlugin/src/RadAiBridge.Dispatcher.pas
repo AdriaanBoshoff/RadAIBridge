@@ -19,6 +19,7 @@ uses
   RadAiBridge.Tools.Project,
   RadAiBridge.Tools.Build,
   RadAiBridge.Tools.Debug,
+  RadAiBridge.Tools.Capture,
   RadAiBridge.Tools.Design,
   RadAiBridge.Tools.Create,
   RadAiBridge.Tools.Source;
@@ -88,6 +89,9 @@ begin
   RegisterProjectTools(RegisterFn);
   RegisterBuildTools(RegisterRawFn);
   RegisterDebugTools(RegisterFn);
+  { Raw on purpose: capturing needs no main thread, so it is the one tool that
+    still answers while a modal dialog owns the IDE. See the unit header. }
+  RegisterCaptureTools(RegisterRawFn);
   RegisterDesignTools(RegisterFn);
   RegisterCreateTools(RegisterFn);
   RegisterSourceTools(RegisterFn);

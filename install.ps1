@@ -49,6 +49,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = $PSScriptRoot
 
+# The plugin uses IOTAProjectCreator190 and other recent ToolsAPI interfaces.
+# Older IDEs will fail with a wall of compiler errors that says nothing useful
+# to someone who just wanted to install this, so refuse them up front and say
+# why. Raise this only after actually testing on an older version.
+$MinBdsVersion = 36.0
+$TestedBdsVersion = '37.0 (RAD Studio 13)'
+
 function Write-Step  ($n, $m) { Write-Host ""; Write-Host "[$n/7] $m" -ForegroundColor Cyan }
 function Write-Ok    ($m)     { Write-Host "      $m" -ForegroundColor Green }
 function Write-Info  ($m)     { Write-Host "      $m" -ForegroundColor Gray }
@@ -116,8 +123,19 @@ if (-not (Test-Path $libPath)) {
        "Your RAD Studio install may be incomplete. Repair it from the installer."
 }
 
+$versionNumber = 0.0
+[double]::TryParse($bds.Version, [ref]$versionNumber) | Out-Null
+if ($versionNumber -gt 0 -and $versionNumber -lt $MinBdsVersion) {
+  Fail "RAD Studio $($bds.Version) is older than this plugin supports (minimum $MinBdsVersion)." `
+       "The plugin uses ToolsAPI interfaces that do not exist in your version, so it cannot compile. Tested on $TestedBdsVersion. If you want to try anyway, lower `$MinBdsVersion at the top of this script - and please report whether it worked."
+}
+
 Write-Ok "RAD Studio $($bds.Version)"
 Write-Info $bds.RootDir
+if ($bds.Version -ne '37.0') {
+  Write-Warn2 "Note: this has only been tested on $TestedBdsVersion."
+  Write-Warn2 "It should work here, but please report anything that does not."
+}
 
 # --------------------------------------------------------------------- 2. Node
 Write-Step 2 "Checking Node.js"
