@@ -21,7 +21,9 @@ type
     FMethods: TDictionary<string, TRpcMethodFunc>;
     FLock: TCriticalSection;
     FBoundEvent: TEvent;
+    FActiveHandlers: Integer;
     procedure HandleClient(ClientSocket: TSocket);
+    procedure SpawnClientHandler(ClientSocket: TSocket);
     function DispatchRequest(const RequestLine: string): string;
     function RecvLine(Socket: TSocket; var Line: string): Boolean;
     procedure SendLine(Socket: TSocket; const Line: string);
@@ -80,8 +82,23 @@ begin
 end;
 
 destructor TRpcServer.Destroy;
+const
+  HandlerDrainMs = 3000;
+var
+  Waited: Integer;
 begin
   CloseListenSocket;
+
+  { Client handler threads outlive the accept loop. Give them a bounded moment
+    to finish before the dictionary and lock they use go away. Bounded because
+    a handler parked in a tool call must not hold up closing the IDE. }
+  Waited := 0;
+  while (FActiveHandlers > 0) and (Waited < HandlerDrainMs) do
+  begin
+    Sleep(25);
+    Inc(Waited, 25);
+  end;
+
   WSACleanup;
   FMethods.Free;
   FLock.Free;
@@ -143,11 +160,63 @@ begin
   while not Terminated do
   begin
     ClientSocket := accept(FListenSocket, nil, nil);
+
     if Terminated then
+    begin
+      if ClientSocket <> INVALID_SOCKET then
+        closesocket(ClientSocket);
       Break;
-    if ClientSocket <> INVALID_SOCKET then
-      HandleClient(ClientSocket);
+    end;
+
+    if ClientSocket = INVALID_SOCKET then
+    begin
+      { accept failed. A closed listening socket means we are shutting down;
+        anything else is transient, and backing off beats spinning on it. }
+      if FListenSocket = INVALID_SOCKET then
+        Break;
+      Sleep(50);
+      Continue;
+    end;
+
+    SpawnClientHandler(ClientSocket);
   end;
+end;
+
+{ Each client gets its own thread.
+
+  Two reasons, both learned the hard way:
+
+  Serving clients inline from the accept loop meant one call could block every
+  other one. That defeated the point of registering captureScreenshot raw - an
+  agent whose call was stuck could not take a screenshot to find out *why*,
+  because the stuck call still owned the server.
+
+  And an exception escaping HandleClient unwound Execute, so the server thread
+  died while the IDE carried on running. The symptom is nasty: no error, no
+  dialog, just ECONNREFUSED on every later call and no way back short of
+  restarting the IDE. Serving a client must never be able to take down the
+  listener, so the handler swallows everything. }
+procedure TRpcServer.SpawnClientHandler(ClientSocket: TSocket);
+begin
+  TInterlocked.Increment(FActiveHandlers);
+  TThread.CreateAnonymousThread(
+    procedure
+    begin
+      try
+        try
+          HandleClient(ClientSocket);
+        except
+          { Deliberately swallowed - see above. DispatchRequest already turns
+            tool failures into proper JSON-RPC error replies, so anything
+            reaching here is a transport-level failure affecting only this
+            one client. }
+          on E: Exception do
+            ;
+        end;
+      finally
+        TInterlocked.Decrement(FActiveHandlers);
+      end;
+    end).Start;
 end;
 
 function TRpcServer.RecvLine(Socket: TSocket; var Line: string): Boolean;
