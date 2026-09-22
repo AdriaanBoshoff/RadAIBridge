@@ -90,12 +90,29 @@ begin
   Result := TJSONBool.Create(True);
 end;
 
+{ Collapses CRLF and lone CR to LF so text from two sources can be compared. }
+function NormaliseEol(const S: string): string;
+begin
+  Result := S.Replace(#13#10, #10).Replace(#13, #10);
+end;
+
+{ Matching is done on line-ending-normalised text.
+
+  Delphi source buffers are CRLF. A caller sending LF - which is everything
+  that composes source as ordinary text - could never match anything spanning
+  more than one line, so applyEdit failed on every multi-line edit and worked
+  only on single-line ones. That is a confusing failure, because the text
+  quite visibly *is* in the file.
+
+  The buffer's own convention is restored before writing, so normalising for
+  the comparison does not quietly rewrite every line ending in the file. }
 function ToolApplyEdit(Params: TJSONObject): TJSONValue;
 var
   FilePath, OldContent, NewContent, FullText: string;
+  NormText, NormOld, NormNew, Updated: string;
   SourceEditor: IOTASourceEditor;
   P: Integer;
-  FromDisk: Boolean;
+  FromDisk, WasCrLf: Boolean;
 begin
   FilePath := Params.GetValue<string>('filePath');
   OldContent := Params.GetValue<string>('oldContent');
@@ -108,20 +125,32 @@ begin
   else
     FullText := TFile.ReadAllText(FilePath, TEncoding.UTF8);
 
-  P := Pos(OldContent, FullText);
+  WasCrLf := FullText.Contains(#13#10);
+  NormText := NormaliseEol(FullText);
+  NormOld := NormaliseEol(OldContent);
+  NormNew := NormaliseEol(NewContent);
+
+  if NormOld = '' then
+    raise Exception.Create('oldContent must not be empty');
+
+  P := Pos(NormOld, NormText);
   if P = 0 then
     raise Exception.Create('oldContent not found in file - it must match exactly, ' +
-      'including whitespace. Re-read the file first.');
-  if Pos(OldContent, FullText, P + 1) > 0 then
+      'including whitespace (line endings are ignored). Re-read the file first.');
+  if Pos(NormOld, NormText, P + 1) > 0 then
     raise Exception.Create('oldContent is not unique in the file - include more ' +
       'surrounding context so the match is unambiguous.');
 
-  FullText := Copy(FullText, 1, P - 1) + NewContent + Copy(FullText, P + Length(OldContent), MaxInt);
+  Updated := Copy(NormText, 1, P - 1) + NormNew +
+             Copy(NormText, P + Length(NormOld), MaxInt);
+
+  if WasCrLf then
+    Updated := Updated.Replace(#10, #13#10);
 
   if not FromDisk then
-    WriteSourceEditorText(SourceEditor, FullText)
+    WriteSourceEditorText(SourceEditor, Updated)
   else
-    TFile.WriteAllText(FilePath, FullText, TEncoding.UTF8);
+    TFile.WriteAllText(FilePath, Updated, TEncoding.UTF8);
   Result := TJSONBool.Create(True);
 end;
 

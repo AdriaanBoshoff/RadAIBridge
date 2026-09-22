@@ -185,37 +185,116 @@ begin
   end;
 end;
 
+{ msbuild reports compiler diagnostics in more than one shape, and which one
+  you get depends on the toolchain version:
+
+    [dcc32 Error] MainForm.pas(141): E2003 Undeclared identifier: 'X'
+    MainForm.pas(141): error E2003: Undeclared identifier: 'X' [C:\...\App.dproj]
+
+  Only the first was handled, so on a toolchain that emits the second the
+  errors array came back empty - and because 'success' was derived from that
+  count, a failed build was reported as a successful one. Both are matched
+  now, and the verdict no longer depends on this function recognising
+  anything (see BuildReportedSuccess). }
 function ParseBuildOutput(const Output: string; out Errors, Warnings: TJSONArray): Integer;
+const
+  { file(line): severity CODE: message [project] - the trailing project path
+    is msbuild's, not the compiler's, so it is dropped. }
+  PlainPattern =
+    '^\s*(.+?)\((\d+)(?:,\d+)?\):\s*(?:Hint\s+)?(error|warning|fatal error|hint)\s+' +
+    '([A-Za-z]\d+):\s*(.*?)\s*(?:\[[^\]]*\])?$';
+  BracketPattern =
+    '\[dcc\w*\s+(Error|Warning|Fatal Error|Hint)\]\s+(.+?)\((\d+)\):\s*(\S+)\s+(.*)';
 var
-  Line: string;
+  Line, Key, FileName, Code, Message: string;
   Lines: TArray<string>;
   Match: TMatch;
   Entry: TJSONObject;
-  Severity: string;
+  LineNum: Integer;
+  Seen: TStringList;
 begin
   Errors := TJSONArray.Create;
   Warnings := TJSONArray.Create;
   Result := 0;
-  Lines := Output.Replace(#13#10, #10).Split([#10]);
-  for Line in Lines do
-  begin
-    Match := TRegEx.Match(Line, '\[dcc\w*\s+(Error|Warning|Fatal Error|Hint)\]\s+(.+?)\((\d+)\):\s*(\S+)\s+(.*)');
-    if not Match.Success then
-      Continue;
-    Severity := Match.Groups[1].Value;
-    Entry := TJSONObject.Create;
-    Entry.AddPair('file', Match.Groups[2].Value);
-    Entry.AddPair('line', TJSONNumber.Create(StrToIntDef(Match.Groups[3].Value, 0)));
-    Entry.AddPair('code', Match.Groups[4].Value);
-    Entry.AddPair('message', Match.Groups[5].Value);
-    if SameText(Severity, 'Error') or SameText(Severity, 'Fatal Error') then
+
+  Seen := TStringList.Create;
+  try
+    Seen.Sorted := True;
+    Seen.Duplicates := dupIgnore;
+    Lines := Output.Replace(#13#10, #10).Split([#10]);
+
+    for Line in Lines do
     begin
-      Errors.Add(Entry);
-      Inc(Result);
-    end
-    else
-      Warnings.Add(Entry);
+      Match := TRegEx.Match(Line, BracketPattern);
+      if Match.Success then
+      begin
+        FileName := Match.Groups[2].Value;
+        LineNum := StrToIntDef(Match.Groups[3].Value, 0);
+        Code := Match.Groups[4].Value;
+        Message := Match.Groups[5].Value;
+      end
+      else
+      begin
+        Match := TRegEx.Match(Line, PlainPattern, [roIgnoreCase]);
+        if not Match.Success then
+          Continue;
+        FileName := Match.Groups[1].Value.Trim;
+        LineNum := StrToIntDef(Match.Groups[2].Value, 0);
+        Code := Match.Groups[4].Value;
+        Message := Match.Groups[5].Value;
+      end;
+
+      { msbuild prints each diagnostic twice - once inline and again in the
+        summary block at the end - so without this every error is counted
+        double. }
+      Key := Format('%s|%d|%s|%s', [FileName, LineNum, Code, Message]);
+      if Seen.IndexOf(Key) >= 0 then
+        Continue;
+      Seen.Add(Key);
+
+      { Classify by the code letter rather than the severity word: it is the
+        compiler's own taxonomy and is consistent across both formats. H is a
+        hint - the "directory not found" library-path noise is all H2675, a
+        dozen per build - and hints are dropped rather than passed off as
+        warnings. }
+      case UpCase(Code.Chars[0]) of
+        'E', 'F':
+          begin
+            Entry := TJSONObject.Create;
+            Entry.AddPair('file', FileName);
+            Entry.AddPair('line', TJSONNumber.Create(LineNum));
+            Entry.AddPair('code', Code);
+            Entry.AddPair('message', Message);
+            Errors.Add(Entry);
+            Inc(Result);
+          end;
+        'W':
+          begin
+            Entry := TJSONObject.Create;
+            Entry.AddPair('file', FileName);
+            Entry.AddPair('line', TJSONNumber.Create(LineNum));
+            Entry.AddPair('code', Code);
+            Entry.AddPair('message', Message);
+            Warnings.Add(Entry);
+          end;
+      end;
+    end;
+  finally
+    Seen.Free;
   end;
+end;
+
+{ msbuild's own verdict, which is the only thing that actually knows whether
+  the build worked.
+
+  Deriving success from the number of diagnostics we managed to parse means
+  any output format we fail to recognise silently becomes "success" - the
+  worst possible direction to be wrong in, because an agent reads this field
+  and moves on. }
+function BuildReportedSuccess(const Output: string): Boolean;
+begin
+  Result := Output.Contains('Build succeeded') and
+            not Output.Contains('Build FAILED');
 end;
 
 { One line the caller can act on without wading through msbuild's output:
@@ -230,7 +309,7 @@ begin
     if TRegEx.IsMatch(Line, '^\s*\d+ lines, [\d.]+ seconds') then
       Stats := Line.Trim;
 
-  if Output.Contains('Build succeeded') and (ErrorCount = 0) then
+  if BuildReportedSuccess(Output) and (ErrorCount = 0) then
     Result := 'Build succeeded'
   else
     Result := 'Build FAILED';
@@ -251,7 +330,7 @@ var
   ErrorCount: Integer;
   Obj: TJSONObject;
   SetupError: string;
-  IncludeRaw: Boolean;
+  IncludeRaw, Succeeded: Boolean;
 begin
   SetupError := '';
   RunOnMainThread(
@@ -290,8 +369,10 @@ begin
   Output := RunProcessCaptureOutput(CmdLine, WorkDir, 5 * 60 * 1000);
   ErrorCount := ParseBuildOutput(Output, Errors, Warnings);
 
+  Succeeded := BuildReportedSuccess(Output) and (ErrorCount = 0);
+
   Obj := TJSONObject.Create;
-  Obj.AddPair('success', TJSONBool.Create(ErrorCount = 0));
+  Obj.AddPair('success', TJSONBool.Create(Succeeded));
   Obj.AddPair('summary', SummariseBuild(Output, ErrorCount, Warnings.Count));
   Obj.AddPair('errors', Errors);
   Obj.AddPair('warnings', Warnings);
@@ -301,7 +382,7 @@ begin
     the caller would be told "it failed" with nothing to act on. }
   IncludeRaw := Params.GetValue<Boolean>('includeRawOutput', False);
   if not IncludeRaw then
-    IncludeRaw := (ErrorCount = 0) and not Output.Contains('Build succeeded');
+    IncludeRaw := not Succeeded and (ErrorCount = 0);
   if IncludeRaw then
     Obj.AddPair('rawOutput', Output);
   Result := Obj;

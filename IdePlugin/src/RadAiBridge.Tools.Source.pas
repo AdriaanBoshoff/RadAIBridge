@@ -19,6 +19,13 @@ uses
 
 procedure RegisterSourceTools(const RegisterFn: TProc<string, TFunc<TJSONObject, TJSONValue>>);
 
+{ Adds UnitName to FilePath's interface uses clause if it is not already
+  there, and reports whether it had to. Exposed so addComponent can pull in
+  the unit that declares the class it just dropped, the way the IDE does when
+  a component comes off the palette. Silently does nothing when the file is
+  not open in the editor. }
+function EnsureUnitInUses(const FilePath, UnitName: string): Boolean;
+
 implementation
 
 type
@@ -223,6 +230,25 @@ begin
       Exit;
   end;
   raise Exception.Create('The current module has no source editor');
+end;
+
+function EnsureUnitInUses(const FilePath, UnitName: string): Boolean;
+var
+  SourceEditor: IOTASourceEditor;
+  Text, NewText: string;
+begin
+  Result := False;
+  if (Trim(FilePath) = '') or (Trim(UnitName) = '') then
+    Exit;
+
+  SourceEditor := FindSourceEditorByFileName(FilePath);
+  if SourceEditor = nil then
+    Exit;
+
+  Text := ReadSourceEditorText(SourceEditor);
+  NewText := AddUnitToUses(Text, Trim(UnitName), 'interface', Result);
+  if Result then
+    WriteSourceEditorText(SourceEditor, NewText);
 end;
 
 function ToolAddUsesUnit(Params: TJSONObject): TJSONValue;

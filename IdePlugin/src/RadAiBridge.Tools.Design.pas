@@ -10,7 +10,7 @@ interface
 
 uses
   System.SysUtils, System.Classes, System.JSON, System.Rtti, System.TypInfo,
-  ToolsAPI, DesignIntf, RadAiBridge.Rtti.Utils;
+  ToolsAPI, DesignIntf, RadAiBridge.Rtti.Utils, RadAiBridge.Tools.Source;
 
 procedure RegisterDesignTools(const RegisterFn: TProc<string, TFunc<TJSONObject, TJSONValue>>);
 
@@ -42,24 +42,41 @@ begin
   end;
 end;
 
-function GetCurrentDesigner: IDesigner;
+{ Also hands back the module the designer belongs to, which is what tells us
+  the .pas file to edit when a dropped component needs its unit in the uses
+  clause. }
+function GetCurrentDesignerAndModule(out Module: IOTAModule): IDesigner;
 var
   ModuleServices: IOTAModuleServices;
   i: Integer;
 begin
   Result := nil;
+  Module := nil;
   if not Supports(BorlandIDEServices, IOTAModuleServices, ModuleServices) then
     Exit;
 
   { Prefer the nominally "current" module, but IDE focus tracking can lag or
     point elsewhere depending on which tab/panel last had focus, so fall back
     to scanning every open module for one with a live form designer. }
-  if TryGetModuleDesigner(ModuleServices.CurrentModule, Result) then
+  Module := ModuleServices.CurrentModule;
+  if TryGetModuleDesigner(Module, Result) then
     Exit;
 
   for i := 0 to ModuleServices.ModuleCount - 1 do
-    if TryGetModuleDesigner(ModuleServices.Modules[i], Result) then
+  begin
+    Module := ModuleServices.Modules[i];
+    if TryGetModuleDesigner(Module, Result) then
       Exit;
+  end;
+
+  Module := nil;
+end;
+
+function GetCurrentDesigner: IDesigner;
+var
+  Module: IOTAModule;
+begin
+  Result := GetCurrentDesignerAndModule(Module);
 end;
 
 function FindComponentByName(Root: TComponent; const Name: string): TComponent;
@@ -436,8 +453,11 @@ var
   CompClass: TComponentClass;
   PersistentClass: TPersistentClass;
   Ctx: TRttiContext;
+  Module: IOTAModule;
+  DeclaringUnit: string;
+  UnitAdded: Boolean;
 begin
-  Designer := GetCurrentDesigner;
+  Designer := GetCurrentDesignerAndModule(Module);
   if Designer = nil then
     raise Exception.Create('No form is currently open in the Designer');
 
@@ -482,9 +502,34 @@ begin
   end;
 
   Designer.Modified;
+
   Ctx := TRttiContext.Create;
   try
+    { Put the declaring unit in the form's uses clause, which is what the IDE
+      does when a component is dropped from the palette. Without it the
+      designer happily creates the component and writes it to the .fmx, then
+      the generated declaration - BtnOk: TButton - does not compile, because
+      nothing in the unit has heard of TButton. A form built entirely through
+      these tools failed its first build for exactly that reason. }
+    UnitAdded := False;
+    DeclaringUnit := '';
+    { TObject.UnitName on the component itself. Going through TRttiType looks
+      more principled but is a trap: TRttiType has no UnitName of its own, so
+      the call binds to TObject.UnitName on the TRttiType *instance* and
+      cheerfully reports System.Rtti as the declaring unit of every component
+      ever created. It compiles, it runs, and it is wrong every time. }
+    if Module <> nil then
+    begin
+      DeclaringUnit := NewComp.UnitName;
+      UnitAdded := EnsureUnitInUses(Module.FileName, DeclaringUnit);
+    end;
+
     Result := ComponentToJson(Ctx, NewComp, Designer.Root, False);
+    if DeclaringUnit <> '' then
+    begin
+      TJSONObject(Result).AddPair('declaringUnit', DeclaringUnit);
+      TJSONObject(Result).AddPair('unitAddedToUses', TJSONBool.Create(UnitAdded));
+    end;
   finally
     Ctx.Free;
   end;

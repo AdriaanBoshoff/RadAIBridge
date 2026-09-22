@@ -36,6 +36,35 @@ This project has not made a tagged release yet; everything below is on `main`.
 
 ### Fixed
 
+The five defects below were all found in one sitting, by using the bridge to
+build a real FMX application with it rather than by exercising tools one at a
+time. That turned out to be worth more than any amount of individual testing.
+
+- **The RPC server died permanently on any exception.** The accept loop had no
+  guard, so one exception unwound `Execute` and killed the thread. The IDE
+  carried on running with no listener: every later call got `ECONNREFUSED`,
+  with no error and no dialog, and the only recovery was restarting the IDE.
+- **The server served one client at a time.** `HandleClient` was called inline
+  from the accept loop, so a blocked call held the whole server. This defeated
+  the point of registering `captureScreenshot` raw — an agent whose call was
+  stuck could not screenshot the IDE to find out why, because the stuck call
+  still owned the connection. Each client now gets its own thread.
+- **`compileProject` reported `success: true` on a failed build.** Its parser
+  only matched msbuild's `[dcc32 Error]` shape, but this toolchain emits
+  `MainForm.pas(141): error E2003: ...`. Nothing matched, and `success` was
+  derived from that empty count. Both formats are matched now, duplicates
+  (msbuild prints each diagnostic twice) are collapsed, hints are no longer
+  passed off as warnings, and the verdict comes from msbuild's own
+  `Build succeeded`/`Build FAILED` rather than from what the parser recognised.
+- **`applyEdit` could not match anything spanning more than one line.** Editor
+  buffers are CRLF; callers send LF. Matching is now done on normalised text,
+  and the buffer's own convention is restored before writing.
+- **`addComponent` did not add the component's unit to the form's `uses`
+  clause.** A form built entirely through the Designer tools would not compile
+  — `TButton` and `TLabel` were undeclared — until `addUsesUnit` was called by
+  hand. It now does what the IDE does when a component comes off the palette,
+  and reports `declaringUnit` and `unitAddedToUses`.
+
 - **IDE shutdown deadlock.** The listener thread parked in `accept()` never
   returned, so `Terminate`/`WaitFor` hung and left a zombie `bds.exe` holding
   the port. The listening socket is now closed from an overridden
