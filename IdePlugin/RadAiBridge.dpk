@@ -1,0 +1,48 @@
+package RadAiBridge;
+
+{$R *.res}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO ON}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS ON}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION ON}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$REFERENCEINFO ON}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES OFF}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DESCRIPTION 'RAD AI Bridge - MCP interface for RAD Studio'}
+{$IMPLICITBUILD ON}
+
+requires
+  rtl,
+  designide,
+  vcl;
+
+contains
+  RadAiBridge.MainThread in 'src\RadAiBridge.MainThread.pas',
+  RadAiBridge.Ide.Utils in 'src\RadAiBridge.Ide.Utils.pas',
+  RadAiBridge.Rtti.Utils in 'src\RadAiBridge.Rtti.Utils.pas',
+  RadAiBridge.Json.Rpc in 'src\RadAiBridge.Json.Rpc.pas',
+  RadAiBridge.Dispatcher in 'src\RadAiBridge.Dispatcher.pas',
+  RadAiBridge.Tools.Files in 'src\RadAiBridge.Tools.Files.pas',
+  RadAiBridge.Tools.Project in 'src\RadAiBridge.Tools.Project.pas',
+  RadAiBridge.Tools.Build in 'src\RadAiBridge.Tools.Build.pas',
+  RadAiBridge.Tools.Debug in 'src\RadAiBridge.Tools.Debug.pas',
+  RadAiBridge.Tools.Design in 'src\RadAiBridge.Tools.Design.pas',
+  RadAiBridge.Tools.Create in 'src\RadAiBridge.Tools.Create.pas',
+  RadAiBridge.Tools.Source in 'src\RadAiBridge.Tools.Source.pas',
+  RadAiBridge.Wizard in 'src\RadAiBridge.Wizard.pas';
+
+end.

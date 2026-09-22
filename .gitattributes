@@ -1,2 +1,16 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts must keep LF endings or they will not run.
+*.sh text eol=lf
+
+# Delphi sources and project files are CRLF by convention on Windows.
+*.pas text eol=crlf
+*.dpk text eol=crlf
+*.dpr text eol=crlf
+*.dproj text eol=crlf
+
+# Binary
+*.res binary
+*.bpl binary
+*.dcu binary

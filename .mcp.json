@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "rad-ai-bridge": {
+      "command": "node",
+      "args": ["./McpServer/dist/index.js"]
+    }
+  }
+}

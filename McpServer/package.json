@@ -1,0 +1,22 @@
+{
+  "name": "rad-ai-bridge-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that lets an AI agent interface with a running RAD Studio IDE via the RadAiBridge OTA plugin.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "rad-ai-bridge-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3"
+  }
+}

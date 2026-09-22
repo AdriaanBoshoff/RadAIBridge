@@ -1,0 +1,24 @@
+# --- Delphi build output ---
+IdePlugin/dcu/
+IdePlugin/*.bpl
+IdePlugin/*.dcp
+IdePlugin/*.dcu
+IdePlugin/*.identcache
+IdePlugin/*.local
+IdePlugin/*.tvsconfig
+IdePlugin/*.delphilsp.json
+IdePlugin/__history/
+IdePlugin/__recovery/
+*.~*
+
+# --- Node ---
+McpServer/node_modules/
+McpServer/dist/
+npm-debug.log*
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
